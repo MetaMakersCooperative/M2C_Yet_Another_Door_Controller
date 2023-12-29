@@ -1,0 +1,2 @@
+default_fqbn: esp32:esp32:wt32-eth01
+default_port: /dev/ttyUSB0
