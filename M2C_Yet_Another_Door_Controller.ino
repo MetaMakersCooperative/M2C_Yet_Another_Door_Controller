@@ -2,6 +2,10 @@
 #include <LittleFS.h>
 #include <LinkedList.h>
 #include <errno.h>
+// Provides functions to disable/feed watch dogs
+#include <esp32-hal.h>
+// Dependencies: freertos/FreeRTOS.h and AsyncTCP.h
+#include <espMqttClientAsync.h>
 
 // These are the pins connected to the Wiegand D0 and D1 signals.
 // Ensure your board supports external Interruptions on these pins

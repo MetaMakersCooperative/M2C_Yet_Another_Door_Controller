@@ -8,21 +8,6 @@ Make sure version `v1.X` of the Arduino IDE installed. It is required to upload 
 
 `arduino-cli` also needs to be installed to compile and upload the sketch. It is possible to use the Arduino IDE `v1.X` or `v2` but they have not been tested/verified. Milage may vary.
 
-## Config
-
-Using the `arduino-cli`, make sure the config contains the `esp8266` index is listed under `additional_urls`.
-
-> Run `arduino-cli config dump` to see the current config. If it doesn't exist run `arduino-cli config init`.
-> Then edit the config file under ~/.arduino15/arduino-cli.yaml and make it look like this:
-
-```yaml
-board_manager:
-  additional_urls:
-    - https://arduino.esp8266.com/stable/package_esp8266com_index.json
-```
-
-> Run `arduino-cli core update-index` to update the board index and `arduino-cli core install esp32:esp32` install the `esp32` libraries.
-
 ## Cards File
 
 The sketch assumes a file named `cards.txt` exists within a `LitteFS` file system. The code will not function correctly without it.
@@ -57,7 +42,7 @@ Double check and make sure the project structure matches the following:
 │   └── cards.txt
 ├── README.md
 ├── sketch.yaml
-└── M2CYetAnotherDoorController.ino
+└── M2C_Yet_Another_Door_Controller.ino
 ```
 
 To upload the `card.txt` file, follow the steps outlined below:
@@ -76,6 +61,10 @@ To install the `esp32` libraries run the following command:
 ```bash
 arduino-cli core install esp32:esp32
 ```
+
+> Might need to run `arduino-cli core update-index` to update the board index.
+
+This will install [espressif/arduino-esp32 version `2.0.11`](https://github.com/espressif/arduino-esp32/tree/2.0.11).
 
 The following libraries can be installed using the Arduino IDE or by downloading the files directly from the source repositories.
 
@@ -97,7 +86,14 @@ The `libraries` should look like this assuming the only installed libraries are 
 
 - [LittleFS_esp32](https://github.com/lorol/LITTLEFS) - by: lorol - version: 1.0.5
 - [Yet Another Arduino Wiegand Library](https://github.com/paulo-raca/YetAnotherArduinoWiegandLibrary) - by: Paulo Costa - version: 2.0.0
-- [LinkedList](https://github.com/ivanseidel/LinkedList) - by Ivan Seidel version: v1.3.3
+- [LinkedList](https://github.com/ivanseidel/LinkedList) - by: Ivan Seidel version: v1.3.3
+
+The following dependencies need to be installed manually as the latest versions are required:
+
+> The best way to get these libraries is to `git clone` them into the `~/Arduino/libraries` directory.
+
+- [espMqttClient](https://github.com/bertmelis/espMqttClient) commit: `983015f`
+- [AsyncTCP](https://github.com/me-no-dev/AsyncTCP) commit: `ca8acf`
 
 ## Commands (using CLI)
 
