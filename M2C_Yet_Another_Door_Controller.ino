@@ -2,10 +2,46 @@
 #include <LittleFS.h>
 #include <LinkedList.h>
 #include <errno.h>
-// Provides functions to disable/feed watch dogs
-#include <esp32-hal.h>
 // Dependencies: freertos/FreeRTOS.h and AsyncTCP.h
 #include <espMqttClientAsync.h>
+
+// Note: These need to be defined BEFORE including ETH.h or calling ETH.begin()
+#ifndef ETH_PHY_TYPE
+#define ETH_PHY_TYPE ETH_PHY_LAN8720
+#define ETH_PHY_ADDR 0
+#define ETH_PHY_MDC 23
+#define ETH_PHY_MDIO 18
+#define ETH_PHY_POWER -1
+#define ETH_CLK_MODE ETH_CLOCK_GPIO0_IN
+#endif
+
+#include <ETH.h>
+
+#ifndef DC_HOST_NAME
+#define DC_HOST_NAME "m2cdoorone"
+#endif
+
+#ifndef DC_CLIENT_ID
+#define DC_CLIENT_ID "door_one"
+#endif
+
+#ifndef DC_MQTT_HOST
+#define DC_MQTT_HOST "mqtt.metamakers.org"
+#endif
+
+#ifndef DC_MQTT_USER
+#define DC_MQTT_USER "door_one"
+#endif
+
+#ifndef DC_MQTT_PW
+#define DC_MQTT_PW "Door_One!1"
+#endif
+
+#ifndef DC_DEBUG
+#define DC_DEBUG 0
+#endif
+
+#define DC_MQTT_RECONNECT_DELAY 20000
 
 // These are the pins connected to the Wiegand D0 and D1 signals.
 // Ensure your board supports external Interruptions on these pins
@@ -25,63 +61,109 @@
 #define STATE_COMPARING 2
 #define STATE_MATCH 3
 
-struct State {
+struct DoorState {
     uint8_t state;
     uint32_t cardCode;
     long doorUnlockedAtMS;
     int cursor;
 };
 
+espMqttClientAsync mqttClient;
+long lastReconnectAttempt = 0;
+
 LinkedList<uint32_t> codeList = LinkedList<uint32_t>();
 
 Wiegand wiegand;
 
-State state;
+DoorState doorState;
+
+IPAddress mqttServerIp;
+bool hasIp = false;
 
 void setup() {
     Serial.begin(115200);
     Serial.println("Listening...");
 
-    state = {STATE_NORMAL, 0, 0, 0};
+    if (DC_DEBUG == 1) {
+        Serial.println("Echo flags for debugging");
+        Serial.print("DC_HOST_NAME: ");
+        Serial.print(DC_HOST_NAME);
+        Serial.print(", DC_CLIENT_ID: ");
+        Serial.print(DC_CLIENT_ID);
+        Serial.print(", DC_MQTT_HOST: ");
+        Serial.print(DC_MQTT_HOST);
+        Serial.print(", DC_MQTT_USER: ");
+        Serial.print(DC_MQTT_USER);
+        Serial.print(", DC_MQTT_PW: ");
+        Serial.print(DC_MQTT_PW);
+        Serial.println("");
+    }
+
+    // NOTE: mqttClient needs to be configured BEFORE the ETH.begin() call.
+    // In the event that the board is restarted, the ETH connected event will
+    // trigger almost immediately. When the event is triggered the mqttClient
+    // is set to attempt to connect. If the below lines haven't been called yet
+    // then the mqttClient will attempt to connect with the wrong config.
+    mqttClient.setClientId(DC_CLIENT_ID);
+    mqttClient.setCredentials(DC_MQTT_USER, DC_MQTT_PW);
+    mqttClient.onDisconnect(onMqttDisconnect);
+    mqttClient.onConnect(onMqttConnect);
+    mqttClient.onMessage(onMqttMessage);
+    mqttClient.setTimeout(2);
+    mqttClient.setKeepAlive(15);
+
+    // WiFi is not configured! However, the WiFi class is generic
+    // which means it can be used to help manage the ETH connection
+    // See the ETH example code:
+    // https://github.com/espressif/arduino-esp32/blob/2.0.11/libraries/Ethernet/examples/ETH_LAN8720/ETH_LAN8720.ino
+    WiFi.onEvent(WiFiEvent);
+    ETH.begin();
+
+    if (DC_DEBUG == 1) {
+        Serial.print("DNS IP: ");
+        Serial.print(ETH.dnsIP());
+        Serial.println();
+    }
+    mqttClient.publish("door_controller/log", 2, true, "Starting setup");
+
+    doorState = {STATE_NORMAL, 0, 0, 0};
 
     if (!LittleFS.begin()) {
-        Serial.println("An Error has occurred while mounting SPIFFS");
+        Serial.println("An Error has occurred while mounting LittleFS");
+        mqttClient.publish("door_controller/log", 2, true, "Failed to mount file system.");
         return;
     }
 
-    File file = LittleFS.open("/cards.txt");
+    File file = LittleFS.open("/cards.txt", FILE_READ);
     if (!file) {
         Serial.println("Failed to open file for reading");
+        mqttClient.publish("door_controller/log", 2, true, "Failed to open cards.txt");
         return;
+    } else {
+        buildCodeList(file);
+        file.close();
     }
 
-    Serial.println("Building List");
-    while (file.available()) {
-        String strCode = file.readStringUntil('\n');
-        Serial.println(strCode);
-        char* endPtr = 0;
-        uint32_t code = strtoul(strCode.c_str(), &endPtr, 10);
-        if ((errno == ERANGE && code == UINT32_MAX) || (errno != 0 && code == 0)) {
-            Serial.print("Conversion error occurred with: ");
-            Serial.println(strCode);
-            Serial.println("Skipping entry.");
-            continue;
-        }
-        if (endPtr == strCode.c_str()) {
-            Serial.print("No digits were found: ");
-            Serial.println(strCode);
-            Serial.println("Skipping entry.");
-            continue;
-        }
-        codeList.add(code);
+    char listSize[31];
+    sprintf(listSize, "Code list size: %d", codeList.size());
+    mqttClient.publish("door_controller/log", 2, true, listSize);
+    Serial.println(listSize);
+    if (codeList.size() == 0) {
+        Serial.println("Code list is empty! cards.txt is likely malformed or corrupted!");
+        mqttClient.publish(
+            "door_controller/log",
+            2,
+            true,
+            "Code list is empty! cards.txt is likely malformed or corrupted!"
+        );
     }
 
-    file.close();
-
-    wiegand.onReceive(receiveCardCode, &state);
+    mqttClient.publish("door_controller/log", 2, true, "Configuring wiegand");
+    wiegand.onReceive(receiveCardCode, &doorState);
     wiegand.onReceiveError(receivedDataError, "Card read error: ");
     wiegand.onStateChange(stateChanged, "State changed: ");
     wiegand.begin(Wiegand::LENGTH_ANY, true);
+    mqttClient.publish("door_controller/log", 2, true, "wiegand configured");
 
     pinMode(PIN_D0, INPUT);
     pinMode(PIN_D1, INPUT);
@@ -93,53 +175,284 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(PIN_D1), pinStateChanged, CHANGE);
 
     pinStateChanged();
+    mqttClient.publish("door_controller/log", 2, true, "Setup complete");
 }
 
 void loop() {
     int delayAmount = 100;
-
-    switch (state.state) {
+    char payload[31];
+    switch (doorState.state) {
         case STATE_NORMAL: 
             break;
         case STATE_UNLOCKED:
-            if ((millis() - state.doorUnlockedAtMS) >= UNLOCK_DOOR_MS) {
+            if ((millis() - doorState.doorUnlockedAtMS) >= UNLOCK_DOOR_MS) {
                 digitalWrite(PIN_IO14, LOW);
                 digitalWrite(PIN_IO15, LOW);
+                mqttClient.publish("door_controller/log", 2, true, "Locking door");
                 Serial.println("Locking door.");
 
-                state.doorUnlockedAtMS = 0;
-                state.state = STATE_NORMAL;
+                doorState.doorUnlockedAtMS = 0;
+                doorState.state = STATE_NORMAL;
             }
             break;
         case STATE_MATCH:
+            createCardAndTimePayload(payload);
+            Serial.print("Unlocking door for: ");
+            Serial.println(payload);
+            mqttClient.publish("door_controller/unlock", 2, true, payload);
+
             Serial.println("Unlocking door ...");
             digitalWrite(PIN_IO14, HIGH);
             digitalWrite(PIN_IO15, HIGH);
-            state.doorUnlockedAtMS = millis();
-            state.cardCode = 0;
-            state.state = STATE_UNLOCKED;
-            state.cursor = 0;
+            doorState.doorUnlockedAtMS = millis();
+            doorState.cardCode = 0;
+            doorState.state = STATE_UNLOCKED;
+            doorState.cursor = 0;
             break;
         case STATE_COMPARING:
-            if (state.cursor >= codeList.size()) {
-                state.state = STATE_NORMAL;
-                state.cursor = 0;
+            if (doorState.cursor >= codeList.size()) {
+                createCardAndTimePayload(payload);
+                Serial.print("Denied access: ");
+                Serial.println(payload);
+                mqttClient.publish("door_controller/denied_access", 2, true, payload);
+                doorState.state = STATE_NORMAL;
+                doorState.cursor = 0;
                 break;
             }
-            uint32_t testCode = codeList.get(state.cursor);
-            if (state.cardCode == testCode) {
+            uint32_t testCode = codeList.get(doorState.cursor);
+            if (doorState.cardCode == testCode) {
                 Serial.println("Match!!");
-                state.state = STATE_MATCH;
+                doorState.state = STATE_MATCH;
                 break;
             }
-            state.cursor += 1;
+            doorState.cursor += 1;
             delayAmount = 0;
             break;
     }
+    Serial.flush();
     noInterrupts();
     wiegand.flush();
     interrupts();
+
+    if (attemptMqttConnection() && millis() - lastReconnectAttempt > DC_MQTT_RECONNECT_DELAY) {
+        connectToMqtt();
+    }
+
     delay(delayAmount);
+}
+
+void buildCodeList(File &file) {
+    mqttClient.publish("door_controller/log", 2, true, "Building code list");
+    Serial.println("Building List");
+
+    char strCode[11];
+    int bytesRead = 0;
+    while (file.available()) {
+        strCode[0] = '\0';
+        bytesRead = 0;
+
+        int character;
+        while (bytesRead < 10) {
+            character = file.read();
+            if (character == '\n' || character == EOF) break;
+            strCode[bytesRead] = character;
+            bytesRead += 1;
+        }
+
+        strCode[bytesRead] = '\0';
+        if (bytesRead == 0) {
+            Serial.println("No data found between line \\n characters.");
+            continue;
+        }
+
+        if (DC_DEBUG == 1) {
+            Serial.printf("last character: %#x", character);
+            Serial.println();
+            Serial.print("First 10 bytes: ");
+            char *idx = strCode;
+            while(idx < strCode + 10) {
+                if (*idx == '\0' || *idx == EOF) break;
+                Serial.printf(" %#x ", *idx);
+                idx += 1;
+            }
+            Serial.println();
+            Serial.flush();
+        }
+
+        // If there are more characters than the expected 10 then it's not
+        // safe to assume that the characters read are a code that should
+        // be able to unlock the door.
+        if (character != '\n' && character != EOF) {
+            Serial.println("Found more characters than expected. Ignoring.");
+            character = file.read();
+            while (character != '\n' && character != EOF) {
+                character = file.read();
+            }
+            continue;
+        }
+
+        char *endPointer = 0;
+        uint32_t code = strtoul(strCode, &endPointer, 10);
+        if ((errno == ERANGE && code == UINT32_MAX) || (errno != 0 && code == 0)) {
+            Serial.print("Conversion error occurred with: ");
+            Serial.println(strCode);
+            Serial.println("Skipping entry.");
+            continue;
+        }
+        if (strcmp(endPointer, strCode) == 0) {
+            Serial.println("No digits were found. Ignoring.");
+            continue;
+        }
+        codeList.add(code);
+    }
+}
+
+void createCardAndTimePayload(char *payload) {
+    struct tm timeinfo;
+    bool hasTime = true;
+
+    if(!getLocalTime(&timeinfo)){
+        Serial.println("Failed to obtain time");
+        mqttClient.publish("door_controller/log", 2, true, "Failed to get time from RTC");
+        hasTime = false;
+    }
+
+    sprintf(payload, "%010d", doorState.cardCode);
+
+    if (hasTime) {
+        char time[21];
+        strftime(time, 21, "|%F %T", &timeinfo);
+        strcat(payload, time);
+    }
+}
+
+bool attemptMqttConnection() {
+    return mqttClient.disconnected() && ETH.linkUp() && hasIp;
+}
+
+void connectToMqtt() {
+    Serial.println("MQTT connecting ...");
+    if (ETH.linkUp() && hasIp) {
+        lastReconnectAttempt = millis();
+        mqttClient.connect();
+    } else {
+        Serial.println("Cannot create connection to MQTT. Ethernet is down.");
+        Serial.print("ETH Link Status: ");
+        Serial.println(ETH.linkUp());
+        Serial.print("ETH IP: ");
+        Serial.println(ETH.localIP());
+        Serial.flush();
+    }
+}
+
+void onMqttConnect(bool sessionPresent) {
+    Serial.println("Connected to MQTT.");
+    mqttClient.subscribe("door_controller/access_list", 2);
+    mqttClient.subscribe("door_controller/health_check", 2);
+}
+
+void onMqttDisconnect(espMqttClientTypes::DisconnectReason reason) {
+    Serial.print("MQTT Disconnected - Code: ");
+    Serial.print(static_cast<uint8_t>(reason));
+    Serial.print(" - Reason: ");
+    switch (reason) {
+        case espMqttClientTypes::DisconnectReason::TCP_DISCONNECTED:
+            Serial.println("TCP disconnected");
+            break;
+        case espMqttClientTypes::DisconnectReason::MQTT_NOT_AUTHORIZED:
+            Serial.println("Not Authorized");
+            break;
+        case espMqttClientTypes::DisconnectReason::MQTT_SERVER_UNAVAILABLE:
+            Serial.println("Server unavailabled");
+            break;
+        case espMqttClientTypes::DisconnectReason::MQTT_MALFORMED_CREDENTIALS:
+            Serial.println("Malformed credentials");
+            break;
+        case espMqttClientTypes::DisconnectReason::MQTT_IDENTIFIER_REJECTED:
+            Serial.println("Identifier rejected");
+            break;
+        case espMqttClientTypes::DisconnectReason::MQTT_UNACCEPTABLE_PROTOCOL_VERSION:
+            Serial.println("Unacceptable protocol version");
+            break;
+        case espMqttClientTypes::DisconnectReason::TLS_BAD_FINGERPRINT:
+            Serial.println("TLS bad fingerprint");
+            break;
+        case espMqttClientTypes::DisconnectReason::USER_OK:
+            Serial.println("User ok");
+            break;
+        default:
+            Serial.println("Unknown");
+            break;
+    }
+}
+
+void onMqttMessage(
+    const espMqttClientTypes::MessageProperties& properties,
+    const char* topic,
+    const uint8_t* payload,
+    size_t len,
+    size_t index,
+    size_t total
+) {
+    if (DC_DEBUG == 1) {
+        Serial.println("Publish received.");
+        Serial.print("  topic: ");
+        Serial.println(topic);
+        Serial.print("  qos: ");
+        Serial.println(properties.qos);
+        Serial.print("  dup: ");
+        Serial.println(properties.dup);
+        Serial.print("  retain: ");
+        Serial.println(properties.retain);
+        Serial.print("  len: ");
+        Serial.println(len);
+        Serial.print("  index: ");
+        Serial.println(index);
+        Serial.print("  total: ");
+        Serial.println(total);
+    }
+    if (strcmp(topic, "door_controller/access_list") == 0) {
+        File file = LittleFS.open("/cards.txt", FILE_WRITE);
+        if (!file) {
+            Serial.println("Failed to open cards.txt");
+            mqttClient.publish("door_controller/log", 2, true, "Failed to open cards.txt");
+            return;
+        }
+
+        Serial.println("Rebuilding cards.txt");
+        mqttClient.publish("door_controller/log", 2, true, "Rebuilding cards.txt");
+
+        const char *payloadPointer = reinterpret_cast<const char*>(payload);
+        while (*(payloadPointer + strspn(payloadPointer, "\n")) != '\0') {
+            file.write(*payloadPointer);
+            payloadPointer += 1;
+        }
+        file.write(EOF);
+        file.flush();
+        file.close();
+
+        file = LittleFS.open("/cards.txt", FILE_READ);
+        if (!file) {
+            Serial.println("Failed to open cards.txt");
+            mqttClient.publish("door_controller/log", 2, true, "Failed to open cards.txt");
+            return;
+        }
+
+        codeList.clear();
+        buildCodeList(file);
+        file.close();
+
+        Serial.println("Completed rebuilding cards.txt");
+        mqttClient.publish("door_controller/log", 2, true, "Completed rebuilding cards.txt");
+
+    } else if (strcmp(topic, "door_controller/health_check") == 0) {
+        Serial.println("Received health check message");
+        mqttClient.publish("door_controller/check_in", 2, true, DC_CLIENT_ID);
+
+    } else {
+        Serial.print("Recieved an unknown topic: ");
+        Serial.println(topic);
+    }
 }
 
 // When any of the pins have changed, update the state of the wiegand library
@@ -152,10 +465,10 @@ void pinStateChanged() {
 // Instead of a message, the seconds parameter can be anything you want -- Whatever you specify on `wiegand.onStateChange()`
 void stateChanged(bool plugged, const char* message) {
     Serial.print(message);
-    Serial.println(plugged ? "CONNECTED" : "DISCONNECTED");
+    Serial.println(plugged ? "wiegand connected" : "wiegan disconnected");
 }
 
-void receiveCardCode(uint8_t* data, uint8_t bits, State* state) {
+void receiveCardCode(uint8_t* data, uint8_t bits, DoorState* state) {
     Serial.println("Receiving data ...");
     Serial.print("Current state: ");
     Serial.println(state->state);
@@ -188,4 +501,77 @@ void receivedDataError(Wiegand::DataError error, uint8_t* rawData, uint8_t rawBi
         Serial.print(rawData[i] & 0xF, 16);
     }
     Serial.println();
+}
+
+void WiFiEvent(WiFiEvent_t event) {
+    int resultCode;
+    switch(event) {
+        case ARDUINO_EVENT_ETH_START:
+            Serial.println("ETH Started");
+            ETH.setHostname(DC_HOST_NAME);
+            break;
+        case ARDUINO_EVENT_ETH_CONNECTED:
+            Serial.println("ETH connected");
+            break;
+        case ARDUINO_EVENT_ETH_GOT_IP:
+            hasIp = true;
+            Serial.print("ETH MAC: ");
+            Serial.print(ETH.macAddress());
+            Serial.print(", IPv4: ");
+            Serial.print(ETH.localIP());
+            if (ETH.fullDuplex()) {
+                Serial.print(", FULL_DUPLEX");
+            }
+            Serial.print(", ");
+            Serial.print(ETH.linkSpeed());
+            Serial.println("Mbps");
+
+            setClock();
+
+            resultCode = WiFi.hostByName(DC_MQTT_HOST, mqttServerIp);
+            if (resultCode == 1) {
+                Serial.print("IP found for hostname: ");
+                Serial.print(DC_MQTT_HOST);
+                Serial.print(" - IP: ");
+                Serial.print(mqttServerIp.toString());
+                Serial.println();
+                mqttClient.setServer(mqttServerIp, 1883);
+            } else {
+                Serial.print("Could not find hostname: ");
+                Serial.print(DC_MQTT_HOST);
+                Serial.println();
+            }
+
+            connectToMqtt();
+            break;
+        case ARDUINO_EVENT_ETH_DISCONNECTED:
+            Serial.println("ETH Disconnected");
+            hasIp = false;
+            break;
+        case ARDUINO_EVENT_ETH_STOP:
+            Serial.println("ETH Stopped");
+            hasIp = false;
+            break;
+        default:
+            Serial.print("Got unhandled event");
+            Serial.println(event);
+            break;
+    }
+}
+
+void setClock() {
+    configTime(0, 0, "pool.ntp.org");
+
+    Serial.print("Waiting for NTP time sync: ");
+    time_t nowSecs = time(nullptr);
+    while (nowSecs < 8 * 3600 * 2) {
+        delay(100);
+        yield();
+        nowSecs = time(nullptr);
+    }
+
+    struct tm timeinfo;
+    gmtime_r(&nowSecs, &timeinfo);
+    Serial.print("Current time: ");
+    Serial.print(asctime(&timeinfo));
 }

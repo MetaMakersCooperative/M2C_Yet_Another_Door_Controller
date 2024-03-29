@@ -76,15 +76,12 @@ The `libraries` should look like this assuming the only installed libraries are 
 ~/Arduino/libraries
 ├── LinkedList
 │   ├── ...
-├── LittleFS_esp32
-│   ├── ...
 └── Yet_Another_Arduino_Wiegand_Library
     ├── ...
 ```
 
 > Make sure to download the source tagged with the versions listed below!
 
-- [LittleFS_esp32](https://github.com/lorol/LITTLEFS) - by: lorol - version: 1.0.5
 - [Yet Another Arduino Wiegand Library](https://github.com/paulo-raca/YetAnotherArduinoWiegandLibrary) - by: Paulo Costa - version: 2.0.0
 - [LinkedList](https://github.com/ivanseidel/LinkedList) - by: Ivan Seidel version: v1.3.3
 
@@ -99,10 +96,16 @@ The following dependencies need to be installed manually as the latest versions 
 
 > Note: `/dev/ttyUSB0` is the default device. Run the following command to see what device is being used: `arduino-cli board list`. Make sure to modify the commands below to match that device.
 
-To compile the sketch run following command:
+To compile the sketch with defaults, run following command:
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:wt32-eth01 ./
+```
+
+To enable more debugging messages, run the following command:
+
+```bash
+arduino-cli compile --build-property "build.extra_flags=\"-DDC_DEBUG=1\"" --fqbn esp32:esp32:wt32-eth01 ./
 ```
 
 To Upload the compiled sketch:
