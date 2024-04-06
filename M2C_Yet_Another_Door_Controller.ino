@@ -46,6 +46,7 @@
 #endif
 
 #define DC_MQTT_RECONNECT_DELAY 20000
+#define DC_NTP_REFRESH_TIME 86400000
 
 // These are the pins connected to the Wiegand D0 and D1 signals.
 // Ensure your board supports external Interruptions on these pins
@@ -83,6 +84,8 @@ DoorState doorState;
 
 IPAddress mqttServerIp;
 bool hasIp = false;
+
+long lastNTPRefresh = 0;
 
 void setup() {
     Serial.begin(115200);
@@ -242,6 +245,13 @@ void loop() {
 
     if (attemptMqttConnection() && millis() - lastReconnectAttempt > DC_MQTT_RECONNECT_DELAY) {
         connectToMqtt();
+    }
+
+    if (ETH.linkUp() && hasIp) {
+        if (millis() - lastNTPRefresh > DC_NTP_REFRESH_TIME) {
+            xTaskCreate(setClock, "set_clock", 10000, NULL, 1, NULL);
+            lastNTPRefresh = millis();
+        }
     }
 
     delay(delayAmount);
@@ -565,7 +575,7 @@ void WiFiEvent(WiFiEvent_t event) {
             Serial.print(ETH.linkSpeed());
             Serial.println("Mbps");
 
-            setClock();
+            setClock(NULL);
 
             resultCode = WiFi.hostByName(DC_MQTT_HOST, mqttServerIp);
             if (resultCode == 1) {
@@ -598,7 +608,7 @@ void WiFiEvent(WiFiEvent_t event) {
     }
 }
 
-void setClock() {
+void setClock(void *_p) {
     configTime(0, 0, DC_NTP_HOST);
 
     Serial.print("Waiting for NTP time sync: ");
