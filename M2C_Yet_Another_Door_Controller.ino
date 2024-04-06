@@ -37,6 +37,10 @@
 #define DC_MQTT_PW "Door_One!1"
 #endif
 
+#ifndef DC_NTP_HOST
+#define DC_NTP_HOST "pool.ntp.org"
+#endif
+
 #ifndef DC_DEBUG
 #define DC_DEBUG 0
 #endif
@@ -124,20 +128,20 @@ void setup() {
         Serial.print(ETH.dnsIP());
         Serial.println();
     }
-    mqttClient.publish("door_controller/log", 2, true, "Starting setup");
+    mqttClient.publish("door_controller/log_info", 2, true, "Starting setup");
 
     doorState = {STATE_NORMAL, 0, 0, 0};
 
     if (!LittleFS.begin()) {
         Serial.println("An Error has occurred while mounting LittleFS");
-        mqttClient.publish("door_controller/log", 2, true, "Failed to mount file system.");
+        mqttClient.publish("door_controller/log_fatal", 2, true, "Failed to mount file system.");
         return;
     }
 
     File file = LittleFS.open("/cards.txt", FILE_READ);
     if (!file) {
         Serial.println("Failed to open file for reading");
-        mqttClient.publish("door_controller/log", 2, true, "Failed to open cards.txt");
+        mqttClient.publish("door_controller/log_fatal", 2, true, "Failed to open cards.txt");
         return;
     } else {
         buildCodeList(file);
@@ -146,24 +150,24 @@ void setup() {
 
     char listSize[31];
     sprintf(listSize, "Code list size: %d", codeList.size());
-    mqttClient.publish("door_controller/log", 2, true, listSize);
+    mqttClient.publish("door_controller/log_info", 2, true, listSize);
     Serial.println(listSize);
     if (codeList.size() == 0) {
         Serial.println("Code list is empty! cards.txt is likely malformed or corrupted!");
         mqttClient.publish(
-            "door_controller/log",
+            "door_controller/log_warn",
             2,
             true,
             "Code list is empty! cards.txt is likely malformed or corrupted!"
         );
     }
 
-    mqttClient.publish("door_controller/log", 2, true, "Configuring wiegand");
+    mqttClient.publish("door_controller/log_info", 2, true, "Configuring wiegand");
     wiegand.onReceive(receiveCardCode, &doorState);
     wiegand.onReceiveError(receivedDataError, "Card read error: ");
     wiegand.onStateChange(stateChanged, "State changed: ");
     wiegand.begin(Wiegand::LENGTH_ANY, true);
-    mqttClient.publish("door_controller/log", 2, true, "wiegand configured");
+    mqttClient.publish("door_controller/log_info", 2, true, "wiegand configured");
 
     pinMode(PIN_D0, INPUT);
     pinMode(PIN_D1, INPUT);
@@ -175,7 +179,7 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(PIN_D1), pinStateChanged, CHANGE);
 
     pinStateChanged();
-    mqttClient.publish("door_controller/log", 2, true, "Setup complete");
+    mqttClient.publish("door_controller/log_info", 2, true, "Setup complete");
 }
 
 void loop() {
@@ -188,24 +192,26 @@ void loop() {
             if ((millis() - doorState.doorUnlockedAtMS) >= UNLOCK_DOOR_MS) {
                 digitalWrite(PIN_IO14, LOW);
                 digitalWrite(PIN_IO15, LOW);
-                mqttClient.publish("door_controller/log", 2, true, "Locking door");
+                createCardAndTimePayload(payload);
                 Serial.println("Locking door.");
+                mqttClient.publish("door_controller/lock", 2, true, payload);
 
                 doorState.doorUnlockedAtMS = 0;
+                doorState.cardCode = 0;
                 doorState.state = STATE_NORMAL;
             }
             break;
         case STATE_MATCH:
+            digitalWrite(PIN_IO14, HIGH);
+            digitalWrite(PIN_IO15, HIGH);
+
             createCardAndTimePayload(payload);
             Serial.print("Unlocking door for: ");
             Serial.println(payload);
             mqttClient.publish("door_controller/unlock", 2, true, payload);
 
             Serial.println("Unlocking door ...");
-            digitalWrite(PIN_IO14, HIGH);
-            digitalWrite(PIN_IO15, HIGH);
             doorState.doorUnlockedAtMS = millis();
-            doorState.cardCode = 0;
             doorState.state = STATE_UNLOCKED;
             doorState.cursor = 0;
             break;
@@ -242,7 +248,7 @@ void loop() {
 }
 
 void buildCodeList(File &file) {
-    mqttClient.publish("door_controller/log", 2, true, "Building code list");
+    mqttClient.publish("door_controller/log_info", 2, true, "Building code list");
     Serial.println("Building List");
 
     char strCode[11];
@@ -262,6 +268,7 @@ void buildCodeList(File &file) {
         strCode[bytesRead] = '\0';
         if (bytesRead == 0) {
             Serial.println("No data found between line \\n characters.");
+            mqttClient.publish("door_controller/log_warn", 2, true, "No data found between line \\n characters.");
             continue;
         }
 
@@ -313,7 +320,7 @@ void createCardAndTimePayload(char *payload) {
 
     if(!getLocalTime(&timeinfo)){
         Serial.println("Failed to obtain time");
-        mqttClient.publish("door_controller/log", 2, true, "Failed to get time from RTC");
+        mqttClient.publish("door_controller/log_warn", 2, true, "Failed to get time from RTC");
         hasTime = false;
     }
 
@@ -411,16 +418,36 @@ void onMqttMessage(
         Serial.print("  total: ");
         Serial.println(total);
     }
+    char infoPayload[400];
+    snprintf(
+        infoPayload,
+        400,
+        "P:%s|QOS:%s|DUP:%s|R:%s|L:%s|I:%s|T:%s",
+        topic,
+        properties.qos,
+        properties.dup,
+        properties.retain,
+        len,
+        index,
+        total
+    );
+    mqttClient.publish("door_controller/log_info", 2, true, infoPayload);
+    if (index != 0 || (len < total)) {
+        char indexPayload[150];
+        snprintf(infoPayload, 150, "Split payload: I:%s|L:%s|T:%s", index, len, total);
+        mqttClient.publish("door_controller/log_warn", 2, true, infoPayload);
+        return;
+    }
     if (strcmp(topic, "door_controller/access_list") == 0) {
         File file = LittleFS.open("/cards.txt", FILE_WRITE);
         if (!file) {
             Serial.println("Failed to open cards.txt");
-            mqttClient.publish("door_controller/log", 2, true, "Failed to open cards.txt");
+            mqttClient.publish("door_controller/log_fatal", 2, true, "Failed to open cards.txt");
             return;
         }
 
         Serial.println("Rebuilding cards.txt");
-        mqttClient.publish("door_controller/log", 2, true, "Rebuilding cards.txt");
+        mqttClient.publish("door_controller/log_info", 2, true, "Rebuilding cards.txt");
 
         const char *payloadPointer = reinterpret_cast<const char*>(payload);
         while (*(payloadPointer + strspn(payloadPointer, "\n")) != '\0') {
@@ -434,7 +461,7 @@ void onMqttMessage(
         file = LittleFS.open("/cards.txt", FILE_READ);
         if (!file) {
             Serial.println("Failed to open cards.txt");
-            mqttClient.publish("door_controller/log", 2, true, "Failed to open cards.txt");
+            mqttClient.publish("door_controller/log_fatal", 2, true, "Failed to open cards.txt");
             return;
         }
 
@@ -443,15 +470,16 @@ void onMqttMessage(
         file.close();
 
         Serial.println("Completed rebuilding cards.txt");
-        mqttClient.publish("door_controller/log", 2, true, "Completed rebuilding cards.txt");
+        mqttClient.publish("door_controller/log_info", 2, true, "Completed rebuilding cards.txt");
 
     } else if (strcmp(topic, "door_controller/health_check") == 0) {
         Serial.println("Received health check message");
         mqttClient.publish("door_controller/check_in", 2, true, DC_CLIENT_ID);
-
     } else {
-        Serial.print("Recieved an unknown topic: ");
-        Serial.println(topic);
+        char payload[100];
+        snprintf(payload, 100, "%s", "Recieved an unknown topic:  %s", topic);
+        mqttClient.publish("door_controller/log_info", 2, true, payload);
+        Serial.println(payload);
     }
 }
 
@@ -464,14 +492,24 @@ void pinStateChanged() {
 // Notifies when a reader has been connected or disconnected.
 // Instead of a message, the seconds parameter can be anything you want -- Whatever you specify on `wiegand.onStateChange()`
 void stateChanged(bool plugged, const char* message) {
-    Serial.print(message);
-    Serial.println(plugged ? "wiegand connected" : "wiegan disconnected");
+    char payload[100];
+    if (plugged) {
+        snprintf(payload, 100, "%s", "Wiegand disconnected: %s", message);
+        mqttClient.publish("door_controller/log_info", 2, true, payload);
+        Serial.println(payload);
+    } else {
+        snprintf(payload, 100, "%s", "Wiegand disconnected: %s", message);
+        mqttClient.publish("door_controller/log_fatal", 2, true, payload);
+        Serial.println(payload);
+    }
 }
 
 void receiveCardCode(uint8_t* data, uint8_t bits, DoorState* state) {
-    Serial.println("Receiving data ...");
-    Serial.print("Current state: ");
-    Serial.println(state->state);
+    if (DC_DEBUG == 1) {
+        Serial.println("Receiving data ...");
+        Serial.print("Current state: ");
+        Serial.println(state->state);
+    }
     if (state->state != STATE_NORMAL) {
         return;
     }
@@ -483,11 +521,12 @@ void receiveCardCode(uint8_t* data, uint8_t bits, DoorState* state) {
     }
     state->cardCode = code;
     state->state = STATE_COMPARING;
-    Serial.print("Moving to state: ");
-    Serial.println(state->state);
+    if (DC_DEBUG == 1) {
+        Serial.print("Moving to state: ");
+        Serial.println(state->state);
+    }
 }
 
-// Notifies when an invalid transmission is detected
 void receivedDataError(Wiegand::DataError error, uint8_t* rawData, uint8_t rawBits, const char* message) {
     Serial.print(message);
     Serial.print(Wiegand::DataErrorStr(error));
@@ -560,7 +599,7 @@ void WiFiEvent(WiFiEvent_t event) {
 }
 
 void setClock() {
-    configTime(0, 0, "pool.ntp.org");
+    configTime(0, 0, DC_NTP_HOST);
 
     Serial.print("Waiting for NTP time sync: ");
     time_t nowSecs = time(nullptr);
@@ -573,5 +612,8 @@ void setClock() {
     struct tm timeinfo;
     gmtime_r(&nowSecs, &timeinfo);
     Serial.print("Current time: ");
-    Serial.print(asctime(&timeinfo));
+    Serial.println(asctime(&timeinfo));
+    char payload[100];
+    snprintf(payload, 100, "%s", asctime(&timeinfo));
+    mqttClient.publish("door_controller/log_info", 2, true, payload);
 }
