@@ -237,6 +237,7 @@ void loop() {
                 mqttClient.publish(TOPIC_DENIED_ACCESS, 1, false, payload);
                 doorState.state = STATE_NORMAL;
                 doorState.cursor = 0;
+                doorState.cardCode = 0;
                 break;
             }
             uint32_t testCode = codeList.get(doorState.cursor);
