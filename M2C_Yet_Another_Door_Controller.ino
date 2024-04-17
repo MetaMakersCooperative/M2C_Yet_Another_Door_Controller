@@ -462,8 +462,8 @@ void onMqttMessage(
     } else if (strcmp(topic, TOPIC_ACCESS_LIST) == 0) {
         File file = LittleFS.open("/cards.txt", FILE_WRITE);
         if (!file) {
-            Serial.println("Failed to open cards.txt");
-            mqttClient.publish(TOPIC_LOG_FATAL, 1, false, "Failed to open cards.txt");
+            Serial.println("Failed to open cards.txt for writing");
+            mqttClient.publish(TOPIC_LOG_FATAL, 1, false, "Failed to open cards.txt for writing");
             return;
         }
 
@@ -481,8 +481,8 @@ void onMqttMessage(
 
         file = LittleFS.open("/cards.txt", FILE_READ);
         if (!file) {
-            Serial.println("Failed to open cards.txt");
-            mqttClient.publish(TOPIC_LOG_FATAL, 1, false, "Failed to open cards.txt");
+            Serial.println("Failed to read cards.txt");
+            mqttClient.publish(TOPIC_LOG_FATAL, 1, false, "Failed to read cards.txt");
             return;
         }
 
