@@ -17,37 +17,51 @@
 
 #include <ETH.h>
 
+// The value that will be set as the device's host name
 #ifndef DC_HOST_NAME
 #define DC_HOST_NAME "m2cdoorone"
 #endif
 
+// Client ID is used by the MQTT broker to identify the client
+// This value needs to be unique across all clients connected to the broker
 #ifndef DC_CLIENT_ID
 #define DC_CLIENT_ID "door_one"
 #endif
 
+// Host name for the MQTT Broker. The host name is used to get the server IP using DNS
 #ifndef DC_MQTT_HOST
 #define DC_MQTT_HOST "mqtt.metamakers.org"
 #endif
 
+// The user that the MQTT client will use to authenticate
 #ifndef DC_MQTT_USER
 #define DC_MQTT_USER "door_one"
 #endif
 
+// The password that the MQTT client will use to authenticate
 #ifndef DC_MQTT_PW
 #define DC_MQTT_PW "Door_One!1"
 #endif
 
+// The domain used to update the RTC using NTP
 #ifndef DC_NTP_HOST
 #define DC_NTP_HOST "pool.ntp.org"
 #endif
 
+// Enable more verbose debugging information via the serial port
+// Do not enable this for production deployments
 #ifndef DC_DEBUG
 #define DC_DEBUG 0
 #endif
 
+// How long the client should wait before trying to reconnect to the MQTT Broker
 #define DC_MQTT_RECONNECT_DELAY 20000
+
+// How long to wait to refresh the RTC using NTP
+// Default is set to 1 day
 #define DC_NTP_REFRESH_TIME 86400000
 
+// Publish MQTT topics with the client ID as the last level
 #define TOPIC_LOG_INFO "door_controller/log_info/" DC_CLIENT_ID
 #define TOPIC_LOG_WARN "door_controller/log_warn/" DC_CLIENT_ID
 #define TOPIC_LOG_FATAL "door_controller/log_fatal/" DC_CLIENT_ID
@@ -56,6 +70,7 @@
 #define TOPIC_DENIED_ACCESS "door_controller/denied_access/" DC_CLIENT_ID
 #define TOPIC_CHECK_IN "door_controller/check_in" DC_CLIENT_ID
 
+// Subscribe MQTT topics
 #define TOPIC_ACCESS_LIST "door_controller/access_list"
 #define TOPIC_HEALTH_CHECK "door_controller/health_check"
 
@@ -72,6 +87,7 @@
 #define PIN_IO14 15
 #define PIN_IO15 14
 
+// Possible door states
 #define STATE_NORMAL 0
 #define STATE_UNLOCKED 1
 #define STATE_COMPARING 2

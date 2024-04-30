@@ -98,6 +98,8 @@ The following dependencies need to be installed manually as the latest versions 
 
 To compile the sketch with defaults, run following command:
 
+> WARNING: Defaults will apply not overridden which could cause a lot of problems on multi door deployments. See the [Override Defaults](#override-defaults) section below.
+
 ```bash
 arduino-cli compile --fqbn esp32:esp32:wt32-eth01 ./
 ```
@@ -118,4 +120,29 @@ To monitor the serial output:
 
 ```bash
 arduino-cli monitor --log-level debug --fqbn esp32:esp32:wt32-eth01 -p /dev/ttyUSB0 -c baudrate=115200
+```
+
+## Override Defaults
+
+> Note: Make sure the latest Arduino CLI is installed
+
+The table below shows the build flags that should be overridden for each controller being deployed.
+Refer to the source files for a complete list of overridable flags.
+
+| Flag Name    | Default             | Description                                                                                                                           | Build Argument                     |
+|--------------|---------------------|---------------------------------------------------------------------------------------------------------------------------------------|------------------------------------|
+| DC_HOST_NAME | m2cdoorone          | The value that will be set as the device's host name                                                                                  | -DDC_HOST_NAME=m2cdoorone          |
+| DC_CLIENT_ID | door_one            | Client ID is used by the MQTT broker to identify the client. This value needs to be unique across all clients connected to the broker | -DDC_CLIENT_ID=door_one            |
+| DC_MQTT_HOST | mqtt.metamakers.org | Host name for the MQTT Broker. The host name is used to get the server IP using DNS                                                   | -DDC_MQTT_HOST=mqtt.metamakers.org |
+| DC_MQTT_USER | door_one            | The user that the MQTT client will use to authenticate                                                                                | -DDC_MQTT_USER=door_one            |
+| DC_MQTT_PW   | Door_One!1          | The password that the MQTT client will use to authenticate                                                                            | -DDC_MQTT_PW=Door_One!1            |
+| DC_NTP_HOST  | pool.ntp.org        | The domain used to update the RTC using NTP                                                                                           | -DDC_NTP_HOST=pool.ntp.org         |
+| DC_DEBUG     | 0                   | Enable more verbose debugging information via the serial port. Do not enable this for production deployments                          | -DDC_DEBUG=0                       |
+
+Below is an example of how to override all the flags in the table above:
+
+> Documentation on the CLI compile command can be found [here](https://arduino.github.io/arduino-cli/0.36/commands/arduino-cli_compile/).
+
+```bash
+arduino-cli compile --build-property "build.extra_flags=\"-DDC_HOST_NAME=m2cdoorone -DDC_CLIENT_ID=door_one -DDC_MQTT_HOST=mqtt.metamakers.org -DDC_MQTT_USER=door_one -DDC_MQTT_PW=Door_One!1 -DDC_NTP_HOST=pool.ntp.org -DDC_DEBUG=0\"" --fqbn esp32:esp32:wt32-eth01 ./
 ```
