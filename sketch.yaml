@@ -8,5 +8,5 @@ profiles:
     libraries:
       - Yet Another Arduino Wiegand Library (2.0.0)
       - LinkedList (1.3.3)
-      - espMqttClient (1.6.0)
-      - AsyncTCP (1.1.1)
+      - espMqttClient (1.7.0)
+      - Async TCP (3.1.4)

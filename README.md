@@ -59,7 +59,7 @@ To upload the `card.txt` file, follow the steps outlined below:
 To install the `esp32` libraries run the following command:
 
 ```bash
-arduino-cli core install esp32:esp32
+arduino-cli core install esp32:esp32@2.0.11
 ```
 
 > Might need to run `arduino-cli core update-index` to update the board index.
@@ -82,15 +82,14 @@ The `libraries` should look like this assuming the only installed libraries are 
 
 > Make sure to download the source tagged with the versions listed below!
 
-- [Yet Another Arduino Wiegand Library](https://github.com/paulo-raca/YetAnotherArduinoWiegandLibrary) - by: Paulo Costa - version: 2.0.0
-- [LinkedList](https://github.com/ivanseidel/LinkedList) - by: Ivan Seidel version: v1.3.3
-
 The following dependencies need to be installed manually as the latest versions are required:
 
 > The best way to get these libraries is to `git clone` them into the `~/Arduino/libraries` directory.
 
-- [espMqttClient](https://github.com/bertmelis/espMqttClient) commit: `983015f`
-- [AsyncTCP](https://github.com/me-no-dev/AsyncTCP) commit: `ca8acf`
+- [Yet Another Arduino Wiegand Library](https://github.com/paulo-raca/YetAnotherArduinoWiegandLibrary) commit: `556e7b8` tag: `2.0.1`
+- [LinkedList](https://github.com/ivanseidel/LinkedList) commit: `0439a72` tag: `v1.3.3`
+- [espMqttClient](https://github.com/bertmelis/espMqttClient) commit: `70d3113` tag: `v1.7.0`
+- [AsyncTCP](https://github.com/mathieucarbou/AsyncTCP) commit: `b20e92e` tag: `v3.1.4`
 
 ## Commands (using CLI)
 
