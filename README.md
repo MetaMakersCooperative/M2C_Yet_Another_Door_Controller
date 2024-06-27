@@ -13,6 +13,7 @@ Make sure version `v1.X` of the Arduino IDE installed. It is required to upload 
 Using the `arduino-cli`, make sure the config contains the `esp8266` index is listed under `additional_urls`.
 
 > Run `arduino-cli config dump` to see the current config. If it doesn't exist run `arduino-cli config init`.
+> Then edit the config file under ~/.arduino15/arduino-cli.yaml and make it look like this:
 
 ```yaml
 board_manager:
