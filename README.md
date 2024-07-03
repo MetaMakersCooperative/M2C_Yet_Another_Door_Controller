@@ -97,7 +97,7 @@ The `libraries` should look like this assuming the only installed libraries are 
 
 - [LittleFS_esp32](https://github.com/lorol/LITTLEFS) - by: lorol - version: 1.0.5
 - [Yet Another Arduino Wiegand Library](https://github.com/paulo-raca/YetAnotherArduinoWiegandLibrary) - by: Paulo Costa - version: 2.0.0
-- [LinkedList](https://github.com/ivanseidel/LinkedList) - version: v1.3.3
+- [LinkedList](https://github.com/ivanseidel/LinkedList) - by Ivan Seidel version: v1.3.3
 
 ## Commands (using CLI)
 
