@@ -27,7 +27,7 @@ board_manager:
 
 The sketch assumes a file named `cards.txt` exists within a `LitteFS` file system. The code will not function correctly without it.
 
-Unfortantely, the only way to upload the file to the device is using `v1.X` Arduino IDE. This is because the upload using a plugin that only can be used with that version of the IDE. Setting up the upload plugin is only required if the `cards.txt` file needs to be updated or if the flash storage was wiped.
+Unfortunately, the only way to upload the file to the device is using `v1.X` Arduino IDE. This is because the upload using a plugin that only can be used with that version of the IDE. Setting up the upload plugin is only required if the `cards.txt` file needs to be updated or if the flash storage was wiped.
 
 ### Setup the Upload Plugin
 
