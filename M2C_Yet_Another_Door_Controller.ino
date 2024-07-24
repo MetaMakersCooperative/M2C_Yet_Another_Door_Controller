@@ -17,6 +17,8 @@
 
 #include <ETH.h>
 
+#include "root_ca.h"
+
 // The value that will be set as the device's host name
 #ifndef DC_HOST_NAME
 #define DC_HOST_NAME "m2cdoorone"

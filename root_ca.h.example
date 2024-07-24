@@ -1,0 +1,8 @@
+// Makes sure the header file isn't included more than once
+#ifndef _ROOT_CA_H
+#define _ROOT_CA_H
+const char* root_ca = \
+"-----BEGIN CERTIFICATE-----\n" \
+"Put root cert here\n" \
+"-----END CERTIFICATE-----\n";
+#endif                                                           
