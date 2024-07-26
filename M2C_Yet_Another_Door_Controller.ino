@@ -3,7 +3,7 @@
 #include <LinkedList.h>
 #include <errno.h>
 // Dependencies: freertos/FreeRTOS.h and AsyncTCP.h
-#include <espMqttClientAsync.h>
+#include <espMqttClient.h>
 
 // Note: These need to be defined BEFORE including ETH.h or calling ETH.begin()
 #ifndef ETH_PHY_TYPE
@@ -70,7 +70,7 @@
 #define TOPIC_UNLOCK "door_controller/unlock/" DC_CLIENT_ID
 #define TOPIC_LOCK "door_controller/lock/" DC_CLIENT_ID
 #define TOPIC_DENIED_ACCESS "door_controller/denied_access/" DC_CLIENT_ID
-#define TOPIC_CHECK_IN "door_controller/check_in" DC_CLIENT_ID
+#define TOPIC_CHECK_IN "door_controller/check_in/" DC_CLIENT_ID
 
 // Subscribe MQTT topics
 #define TOPIC_ACCESS_LIST "door_controller/access_list"
@@ -102,7 +102,9 @@ struct DoorState {
     int cursor;
 };
 
-espMqttClientAsync mqttClient;
+espMqttClientSecure mqttClient(espMqttClientTypes::UseInternalTask::NO);
+static TaskHandle_t taskHandle;
+
 long lastReconnectAttempt = 0;
 
 LinkedList<uint32_t> codeList = LinkedList<uint32_t>();
@@ -142,18 +144,34 @@ void setup() {
     // then the mqttClient will attempt to connect with the wrong config.
     mqttClient.setClientId(DC_CLIENT_ID);
     mqttClient.setCredentials(DC_MQTT_USER, DC_MQTT_PW);
+    mqttClient.setCACert(root_ca);
     mqttClient.onDisconnect(onMqttDisconnect);
     mqttClient.onConnect(onMqttConnect);
     mqttClient.onMessage(onMqttMessage);
-    mqttClient.setTimeout(2);
+    mqttClient.setTimeout(5);
     mqttClient.setKeepAlive(15);
 
-    // WiFi is not configured! However, the WiFi class is generic
-    // which means it can be used to help manage the ETH connection
-    // See the ETH example code:
-    // https://github.com/espressif/arduino-esp32/blob/2.0.11/libraries/Ethernet/examples/ETH_LAN8720/ETH_LAN8720.ino
-    WiFi.onEvent(WiFiEvent);
-    ETH.begin();
+    xTaskCreatePinnedToCore(
+        (TaskFunction_t)networkingTask,
+        "mqttclienttask",
+        5120,
+        nullptr,
+        1,
+        &taskHandle,
+        0
+    );
+
+    // ETH/Network code inspired by:
+    // https://github.com/espressif/arduino-esp32/blob/3.0.2/libraries/Ethernet/examples/ETH_TLK110/ETH_TLK110.ino
+    Network.onEvent(networkEvent);
+    ETH.begin(
+        ETH_PHY_TYPE,
+        ETH_PHY_ADDR,
+        ETH_PHY_MDC,
+        ETH_PHY_MDIO,
+        ETH_PHY_POWER,
+        ETH_CLK_MODE
+    );
 
     if (DC_DEBUG == 1) {
         Serial.print("DNS IP: ");
@@ -215,7 +233,6 @@ void setup() {
 }
 
 void loop() {
-    int delayAmount = 100;
     char payload[31];
     switch (doorState.state) {
         case STATE_NORMAL: 
@@ -265,26 +282,33 @@ void loop() {
                 break;
             }
             doorState.cursor += 1;
-            delayAmount = 0;
             break;
     }
-    Serial.flush();
-    noInterrupts();
-    wiegand.flush();
-    interrupts();
 
-    if (attemptMqttConnection() && millis() - lastReconnectAttempt > DC_MQTT_RECONNECT_DELAY) {
-        connectToMqtt();
-    }
+    if (doorState.state != STATE_COMPARING) {
+        Serial.flush();
+        noInterrupts();
+        wiegand.flush();
+        interrupts();
 
-    if (ETH.linkUp() && hasIp) {
-        if (millis() - lastNTPRefresh > DC_NTP_REFRESH_TIME) {
-            xTaskCreate(setClock, "set_clock", 10000, NULL, 1, NULL);
-            lastNTPRefresh = millis();
+        if (attemptMqttConnection() && millis() - lastReconnectAttempt > DC_MQTT_RECONNECT_DELAY) {
+            connectToMqtt();
         }
-    }
 
-    delay(delayAmount);
+        if (ETH.linkUp() && hasIp) {
+            if (millis() - lastNTPRefresh > DC_NTP_REFRESH_TIME) {
+                xTaskCreate(setClock, "set_clock", 10000, NULL, 1, NULL);
+                lastNTPRefresh = millis();
+            }
+        }
+        delay(100);
+    }
+}
+
+void networkingTask() {
+  for (;;) {
+    mqttClient.loop();
+  }
 }
 
 void buildCodeList(File &file) {
@@ -458,11 +482,11 @@ void onMqttMessage(
         Serial.print("  total: ");
         Serial.println(total);
     }
-    char infoPayload[400];
+    char infoPayload[300];
     snprintf(
         infoPayload,
-        400,
-        "P:%s|QOS:%s|DUP:%s|R:%s|L:%s|I:%s|T:%s",
+        300,
+        "P:%s|QOS:%u|DUP:%d|R:%d|L:%u|I:%u|T:%u",
         topic,
         properties.qos,
         properties.dup,
@@ -471,6 +495,7 @@ void onMqttMessage(
         index,
         total
     );
+
     mqttClient.publish(TOPIC_LOG_INFO, 1, false, infoPayload);
     if (index != 0 || (len < total)) {
         mqttClient.publish(TOPIC_LOG_WARN, 1, false, "Split payload, ignoring");
@@ -582,7 +607,7 @@ void receivedDataError(Wiegand::DataError error, uint8_t* rawData, uint8_t rawBi
     Serial.println();
 }
 
-void WiFiEvent(WiFiEvent_t event) {
+void networkEvent(arduino_event_id_t event) {
     int resultCode;
     switch(event) {
         case ARDUINO_EVENT_ETH_START:
@@ -607,20 +632,7 @@ void WiFiEvent(WiFiEvent_t event) {
 
             setClock(NULL);
 
-            resultCode = WiFi.hostByName(DC_MQTT_HOST, mqttServerIp);
-            if (resultCode == 1) {
-                Serial.print("IP found for hostname: ");
-                Serial.print(DC_MQTT_HOST);
-                Serial.print(" - IP: ");
-                Serial.print(mqttServerIp.toString());
-                Serial.println();
-                mqttClient.setServer(mqttServerIp, 1883);
-            } else {
-                Serial.print("Could not find hostname: ");
-                Serial.print(DC_MQTT_HOST);
-                Serial.println();
-            }
-
+            mqttClient.setServer(DC_MQTT_HOST, 1883);
             connectToMqtt();
             break;
         case ARDUINO_EVENT_ETH_DISCONNECTED:

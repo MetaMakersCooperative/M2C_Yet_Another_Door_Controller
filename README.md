@@ -59,12 +59,12 @@ To upload the `card.txt` file, follow the steps outlined below:
 To install the `esp32` libraries run the following command:
 
 ```bash
-arduino-cli core install esp32:esp32@2.0.11
+arduino-cli core install esp32:esp32@3.0.2
 ```
 
 > Might need to run `arduino-cli core update-index` to update the board index.
 
-This will install [espressif/arduino-esp32 version `2.0.11`](https://github.com/espressif/arduino-esp32/tree/2.0.11).
+This will install [espressif/arduino-esp32 version `3.0.2`](https://github.com/espressif/arduino-esp32/tree/3.0.2).
 
 The following libraries can be installed using the Arduino IDE or by downloading the files directly from the source repositories.
 
@@ -91,6 +91,8 @@ The following dependencies need to be installed manually as the latest versions 
 - [espMqttClient](https://github.com/bertmelis/espMqttClient) commit: `70d3113` tag: `v1.7.0`
 - [AsyncTCP](https://github.com/mathieucarbou/AsyncTCP) commit: `b20e92e` tag: `v3.1.4`
 
+> AsyncTCP is still required even though it's not being used
+
 ## Commands (using CLI)
 
 > Note: `/dev/ttyUSB0` is the default device. Run the following command to see what device is being used: `arduino-cli board list`. Make sure to modify the commands below to match that device.
@@ -106,7 +108,7 @@ arduino-cli compile --fqbn esp32:esp32:wt32-eth01 ./
 To enable more debugging messages, run the following command:
 
 ```bash
-arduino-cli compile --build-property "build.extra_flags=\"-DDC_DEBUG=1\"" --fqbn esp32:esp32:wt32-eth01 ./
+arduino-cli compile --build-property "build.extra_flags=\"-DDC_DEBUG=1\"" --clean --fqbn esp32:esp32:wt32-eth01 ./
 ```
 
 To Upload the compiled sketch:
@@ -120,6 +122,25 @@ To monitor the serial output:
 ```bash
 arduino-cli monitor --log-level debug --fqbn esp32:esp32:wt32-eth01 -p /dev/ttyUSB0 -c baudrate=115200
 ```
+## MQTT Broker
+
+> NOTE: The code assumes the MQTT server connection is TLS. Only TLS v1.2 is supported. Using TLS v1.3 will result in some weird errors. 
+
+The device will send logs, lock, unlock, and other events to the configured MQTT broker. If disconnected, only a few messages will be queued and sent when it's able to reconnect.
+
+If the `door_controller/access_list` topic is received, the device will replace the card file with the payload, then attempt to reload the list from the updated file.
+
+The device will also respond to messages with the `door_controller/health_check` topic. This is designed to help with monitoring the healthiness of the device.
+
+### `root_ca.h`
+
+Use the example file, `root_ca.h.example`, to create the `root_ca.h` file containing the root certificate for the MQTT broker.
+
+> NOTE: The root certificate will expire at some point so make sure you mark it in your calendar!
+
+If you're using Let's Encrypt, then there is a good chance that the root certificate can be download from the following URL: [letsencrypt.org/certs/isrgrootx1.pem](https://letsencrypt.org/certs/isrgrootx1.pem)
+
+Otherwise, check out [letsencrypt.org/certificates/](https://letsencrypt.org/certificates/) for a complete list.
 
 ## Override Defaults
 
@@ -140,8 +161,8 @@ Refer to the source files for a complete list of overridable flags.
 
 Below is an example of how to override all the flags in the table above:
 
-> Documentation on the CLI compile command can be found [here](https://arduino.github.io/arduino-cli/0.36/commands/arduino-cli_compile/).
+> Documentation on the CLI compile command can be found [here](https://arduino.github.io/arduino-cli/1.0/commands/arduino-cli_compile/).
 
 ```bash
-arduino-cli compile --build-property "build.extra_flags=\"-DDC_HOST_NAME=m2cdoorone -DDC_CLIENT_ID=door_one -DDC_MQTT_HOST=mqtt.metamakers.org -DDC_MQTT_USER=door_one -DDC_MQTT_PW=Door_One!1 -DDC_NTP_HOST=pool.ntp.org -DDC_DEBUG=0\"" --fqbn esp32:esp32:wt32-eth01 ./
+arduino-cli compile --build-property "build.extra_flags=-DDC_DEBUG=0 \"-DDC_HOST_NAME=\"m2cdoorone\"\" \"-DDC_CLIENT_ID=\"door_one\"\" \"-DDC_MQTT_HOST=\"mqtt.metamakers.org\"\" \"-DDC_MQTT_USER=\"door_one\"\" \"-DDC_MQTT_PW=\"Door_One!1\"\" \"-DDC_NTP_HOST=\"pool.ntp.org\"\"" --clean --fqbn esp32:esp32:wt32-eth01 ./
 ```
