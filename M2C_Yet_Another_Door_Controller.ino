@@ -315,37 +315,49 @@ void buildCodeList(File &file) {
     mqttClient.publish(TOPIC_LOG_INFO, 1, false, "Building code list");
     Serial.println("Building List");
 
-    char strCode[11];
-    int bytesRead = 0;
+    char digits[11];
+    int digitCursor = 0;
     while (file.available()) {
-        strCode[0] = '\0';
-        bytesRead = 0;
+        digits[0] = '\0';
+        digitCursor = 0;
 
         int character;
-        while (bytesRead < 10) {
+        while (digitCursor < 10) {
             character = file.read();
             if (character == '\n' || character == EOF) break;
-            strCode[bytesRead] = character;
-            bytesRead += 1;
+            digits[digitCursor] = character;
+            digitCursor += 1;
         }
 
-        strCode[bytesRead] = '\0';
-        if (bytesRead == 0) {
+        digits[digitCursor] = '\0';
+        if (digitCursor == 0) {
             Serial.println("No data found between line \\n characters.");
             mqttClient.publish(TOPIC_LOG_WARN, 1, false, "No data found between line \\n characters.");
             continue;
         }
 
+        // If the digitCursor is 10, then 10 characters were read from the file.
+        // Need to read the next
+        if (digitCursor == 10) {
+            character = file.read();
+        }
+
         if (DC_DEBUG == 1) {
+            Serial.printf("Char as number: %d", character);
+            Serial.println();
             Serial.printf("last character: %#x", character);
             Serial.println();
             Serial.print("First 10 bytes: ");
-            char *idx = strCode;
-            while(idx < strCode + 10) {
+            char *idx = digits;
+            while(idx < digits + 10) {
                 if (*idx == '\0' || *idx == EOF) break;
                 Serial.printf(" %#x ", *idx);
                 idx += 1;
             }
+            Serial.println();
+            Serial.printf("Digits: %s", digits);
+            Serial.println();
+            Serial.printf("Digits read: %d", digitCursor);
             Serial.println();
             Serial.flush();
         }
@@ -355,7 +367,6 @@ void buildCodeList(File &file) {
         // be able to unlock the door.
         if (character != '\n' && character != EOF) {
             Serial.println("Found more characters than expected. Ignoring.");
-            character = file.read();
             while (character != '\n' && character != EOF) {
                 character = file.read();
             }
@@ -363,14 +374,14 @@ void buildCodeList(File &file) {
         }
 
         char *endPointer = 0;
-        uint32_t code = strtoul(strCode, &endPointer, 10);
+        uint32_t code = strtoul(digits, &endPointer, 10);
         if ((errno == ERANGE && code == UINT32_MAX) || (errno != 0 && code == 0)) {
             Serial.print("Conversion error occurred with: ");
-            Serial.println(strCode);
+            Serial.println(digits);
             Serial.println("Skipping entry.");
             continue;
         }
-        if (strcmp(endPointer, strCode) == 0) {
+        if (strcmp(endPointer, digits) == 0) {
             Serial.println("No digits were found. Ignoring.");
             continue;
         }
@@ -514,12 +525,12 @@ void onMqttMessage(
         Serial.println("Rebuilding cards.txt");
         mqttClient.publish(TOPIC_LOG_INFO, 1, false, "Rebuilding cards.txt");
 
-        const char *payloadPointer = reinterpret_cast<const char*>(payload);
-        while (*(payloadPointer + strspn(payloadPointer, "\n")) != '\0') {
-            file.write(*payloadPointer);
-            payloadPointer += 1;
+        int payloadCursor = 0;
+        while (payloadCursor < len) {
+            char value = *(payload + payloadCursor);
+            file.write(value);
+            payloadCursor += 1;
         }
-        file.write(EOF);
         file.flush();
         file.close();
 
